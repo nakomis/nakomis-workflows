@@ -76,11 +76,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: ${{ inputs.build-command }}
+      # Credentials before the build: some builds read their config from SSM.
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ inputs.aws-role-arn }}
           aws-region: eu-west-2
+      - run: ${{ inputs.build-command }}
       - name: Publish
         env:
           BUCKET_PARAM: ${{ inputs.ssm-bucket-param }}
