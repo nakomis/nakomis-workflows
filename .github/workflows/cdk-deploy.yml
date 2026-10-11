@@ -1,0 +1,57 @@
+# Run a CDK deploy script from a pnpm project with an OIDC role.
+name: CDK deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment (sandbox | production)
+        required: true
+        type: string
+      aws-role-arn:
+        required: true
+        type: string
+      working-directory:
+        type: string
+        default: infra
+      command:
+        description: Deploy command, e.g. "pnpm ci-deploy-sandbox"
+        required: true
+        type: string
+      node-version:
+        type: string
+        default: '25'
+      ref:
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: CDK deploy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ${{ inputs.working-directory }}/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ inputs.aws-role-arn }}
+          aws-region: eu-west-2
+      - run: ${{ inputs.command }}

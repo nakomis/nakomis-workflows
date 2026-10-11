@@ -1,0 +1,63 @@
+# Build a PlatformIO project and publish firmware.bin to the Fleet bucket
+# (s3://nakomis-firmware-{env}/{Project}/{version}/firmware.bin) using the project's
+# scripts/build_and_upload.py (esp32-bootstrap template). The manifest Lambda does the rest.
+name: Firmware upload
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment (sandbox | production)
+        required: true
+        type: string
+      fleet-env:
+        description: Fleet bucket env (sandbox | prod)
+        required: true
+        type: string
+      aws-role-arn:
+        required: true
+        type: string
+      project-dir:
+        description: PlatformIO project directory (contains platformio.ini and scripts/build_and_upload.py)
+        required: true
+        type: string
+      extra-args:
+        description: Extra arguments for build_and_upload.py, e.g. "-e esp32s3cam --project BootBoots"
+        type: string
+        default: ''
+      ref:
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  upload:
+    name: Firmware → nakomis-firmware-${{ inputs.fleet-env }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.project-dir }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles(format('{0}/platformio.ini', inputs.project-dir)) }}
+      - run: pip install platformio boto3
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ inputs.aws-role-arn }}
+          aws-region: eu-west-2
+      - name: Build and upload (version from include/version.h, no bump in CI)
+        env:
+          AWS_PROFILE: ''
+        run: python scripts/build_and_upload.py --env "${{ inputs.fleet-env }}" --no-bump ${{ inputs.extra-args }}

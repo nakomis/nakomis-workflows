@@ -1,0 +1,110 @@
+# Build a Vite app and publish it under a prefix of an S3 bucket behind CloudFront.
+# Used for the nakomis-shell host (prefix "shell") and every Module Federation remote
+# (prefix "remotes/<name>"). Bucket and distribution are read from SSM so callers don't hard-code them.
+name: Deploy static site
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment (sandbox | production) — production carries the approval gate
+        required: true
+        type: string
+      aws-role-arn:
+        required: true
+        type: string
+      working-directory:
+        description: Directory holding package.json (e.g. web)
+        required: true
+        type: string
+      ssm-bucket-param:
+        description: SSM parameter holding the bucket name, e.g. /nakomis-shell/sandbox/bucket-name
+        required: true
+        type: string
+      ssm-distribution-param:
+        description: SSM parameter holding the CloudFront distribution id
+        required: true
+        type: string
+      prefix:
+        description: Key prefix in the bucket, e.g. shell or remotes/fleet (no leading or trailing slash)
+        required: true
+        type: string
+      invalidation-paths:
+        description: Space-separated viewer paths to invalidate, e.g. "/*" or "/remotes/fleet/*"
+        required: true
+        type: string
+      build-command:
+        type: string
+        default: pnpm build
+      dist-dir:
+        type: string
+        default: dist
+      no-cache-files:
+        description: Space-separated file names served with Cache-Control no-cache (unhashed entry points)
+        type: string
+        default: index.html remoteEntry.js mf-manifest.json
+      node-version:
+        type: string
+        default: '25'
+      ref:
+        description: Git ref to check out (defaults to the triggering commit)
+        type: string
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.prefix }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ${{ inputs.working-directory }}/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: ${{ inputs.build-command }}
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ inputs.aws-role-arn }}
+          aws-region: eu-west-2
+      - name: Publish
+        env:
+          BUCKET_PARAM: ${{ inputs.ssm-bucket-param }}
+          DIST_PARAM: ${{ inputs.ssm-distribution-param }}
+          PREFIX: ${{ inputs.prefix }}
+          DIST_DIR: ${{ inputs.dist-dir }}
+          NO_CACHE: ${{ inputs.no-cache-files }}
+          INVALIDATE: ${{ inputs.invalidation-paths }}
+        run: |
+          set -euo pipefail
+          bucket=$(aws ssm get-parameter --name "$BUCKET_PARAM" --query Parameter.Value --output text)
+          distribution=$(aws ssm get-parameter --name "$DIST_PARAM" --query Parameter.Value --output text)
+          excludes=()
+          for f in $NO_CACHE; do excludes+=(--exclude "*$f"); done
+          # Hashed assets first, so entry points never reference chunks that aren't there yet.
+          # No --delete: browsers holding an older entry point still need its chunks.
+          aws s3 sync "$DIST_DIR" "s3://$bucket/$PREFIX/" "${excludes[@]}" \
+            --cache-control "public,max-age=31536000,immutable"
+          for f in $NO_CACHE; do
+            find "$DIST_DIR" -name "$f" -type f | while read -r path; do
+              key="$PREFIX/${path#"$DIST_DIR"/}"
+              aws s3 cp "$path" "s3://$bucket/$key" --cache-control "no-cache"
+            done
+          done
+          # shellcheck disable=SC2086
+          aws cloudfront create-invalidation --distribution-id "$distribution" --paths $INVALIDATE \
+            --query Invalidation.Id --output text
