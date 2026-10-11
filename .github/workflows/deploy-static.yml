@@ -101,6 +101,8 @@ jobs:
           fi
           # Everything else (index.html, remoteEntry.js, favicon, public/ files) must revalidate.
           aws s3 sync "$DIST_DIR" "s3://$bucket/$PREFIX/" --exclude "$IMMUTABLE_DIR/*" --cache-control "no-cache"
+          # Word-split the paths but don't glob them: "/*" must reach CloudFront literally.
+          set -f
           # shellcheck disable=SC2086
           aws cloudfront create-invalidation --distribution-id "$distribution" --paths $INVALIDATE \
             --query Invalidation.Id --output text
