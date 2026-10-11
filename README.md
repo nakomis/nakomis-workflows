@@ -26,7 +26,7 @@ All three are `workflow_call` workflows: call them from a job with `uses:` and `
 
 | Workflow | Use for |
 |---|---|
-| `deploy-static.yml` | Build a Vite app and publish it under a prefix of the `app.nakomis.com` bucket: the shell host (`shell`) or a Module Federation remote (`remotes/<name>`). Hashed assets are immutable; entry points (`index.html`, `remoteEntry.js`) are `no-cache`. |
+| `deploy-static.yml` | Build a Vite app and publish it under a prefix of the `app.nakomis.com` bucket: the shell host (`shell`) or a Module Federation remote (`remotes/<name>`). Files under `assets/` (content-hashed) are immutable; everything else (`index.html`, `remoteEntry.js`, `public/` files) is `no-cache`. |
 | `cdk-deploy.yml` | Run a pnpm CDK deploy script with an OIDC role, in a GitHub environment (so `production` keeps its approval gate). |
 | `pio-firmware-upload.yml` | Build a PlatformIO project and publish `firmware.bin` to `nakomis-firmware-{env}` via the project's `scripts/build_and_upload.py`. |
 
